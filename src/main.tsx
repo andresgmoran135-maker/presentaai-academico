@@ -35,14 +35,79 @@ function App(){
    }catch(e){setStatus("No se pudo leer el archivo");}
  }
  function analyze(){
-   if(!file)return;
-   const lines=text.split("\n").map(x=>x.trim()).filter(Boolean);
-   const headings=lines.filter(x=>x.length<90 && /^(cap[ií]tulo|introducci[oó]n|objetiv|metodolog|resultado|discusi[oó]n|conclus|referenc)/i.test(x));
-   const proposed=(headings.length?headings.slice(0,15):["Portada","Introducción","Problema","Objetivos","Metodología","Resultados","Conclusiones","Referencias"]);
-   setSlides(proposed.map((h,i)=>({id:i+1,title:h,body:i===0?"Presentación generada desde el documento": "Contenido pendiente de generación con IA. No se inventarán autores ni datos.",citation:i===0?"":"Sustento pendiente de verificación"})));
-   setSel(0); setStatus(`Análisis local terminado: ${proposed.length} láminas propuestas`);
- }
- function update(k:keyof Slide,v:string){setSlides(s=>s.map((x,i)=>i===sel?{...x,[k]:v}:x))}
+   if(!file || !text.trim()) return;
+
+  // Conserva el texto extraído sin modificar palabras.
+  const lines = text
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  // Elimina únicamente números de página aislados o pegados al final
+  // cuando tienen apariencia clara de paginación.
+  const cleanHeading = (value:string) => {
+    return value
+      .replace(/\s+(?:\d{1,3}|[ivxlcdm]{1,8})$/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  // Detecta títulos académicos reales.
+  const headingPattern =
+    /^(?:cap[ií]tulo\s+(?:[ivxlcdm]+|\d+)(?:\s*[:.\-–—]?\s*.*)?|introducci[oó]n|problema(?:\s+de\s+investigaci[oó]n)?|planteamiento\s+del\s+problema|objetivos?|objetivo\s+general|objetivos?\s+espec[ií]ficos|metodolog[ií]a|resultados?|discusi[oó]n|conclusiones?|recomendaciones?|referencias(?:\s+bibliogr[aá]ficas)?|bibliograf[ií]a|anexos?)$/i;
+
+  const detected:string[] = [];
+
+  for(const line of lines){
+    if(line.length > 140) continue;
+
+    const cleaned = cleanHeading(line);
+
+    if(headingPattern.test(cleaned)){
+      if(
+        cleaned &&
+        !detected.some(
+          x => x.toLocaleLowerCase() === cleaned.toLocaleLowerCase()
+        )
+      ){
+        detected.push(cleaned);
+      }
+    }
+  }
+
+  const proposed = detected.length
+    ? detected.slice(0,20)
+    : [
+        "Portada",
+        "Introducción",
+        "Problema de investigación",
+        "Objetivos",
+        "Metodología",
+        "Resultados",
+        "Conclusiones",
+        "Referencias bibliográficas"
+      ];
+
+  const newSlides:Slide[] = proposed.map((title,i) => ({
+    id:i+1,
+    title,
+    body:
+      i===0
+        ? "Presentación generada desde el documento"
+        : "Contenido pendiente de organizar desde el documento original.",
+    citation:
+      i===0
+        ? ""
+        : "Sustento pendiente de verificación"
+  }));
+
+  setSlides(newSlides);
+  setSel(0);
+  setStatus(
+    `Análisis local terminado: ${newSlides.length} láminas propuestas`
+  );
+}
+  function update(k:keyof Slide,v:string){setSlides(s=>s.map((x,i)=>i===sel?{...x,[k]:v}:x))}
  function add(){setSlides(s=>[...s,{id:Date.now(),title:"Nueva lámina",body:"Texto editable",citation:""}]);setSel(slides.length)}
  function exportPDF(){
    const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
