@@ -35,76 +35,192 @@ function App(){
    }catch(e){setStatus("No se pudo leer el archivo");}
  }
  function analyze(){
-   if(!file || !text.trim()) return;
+    if(!file || !text.trim()) return;
 
-  // Conserva el texto extraído sin modificar palabras.
+  setStatus("Analizando estructura, contenido y citas...");
+
   const lines = text
     .split(/\r?\n/)
     .map(x => x.trim())
     .filter(Boolean);
 
-  // Elimina únicamente números de página aislados o pegados al final
-  // cuando tienen apariencia clara de paginación.
-  const cleanHeading = (value:string) => {
-    return value
+  // Limpia solamente números de página colocados al final.
+  const cleanHeading = (value:string) =>
+    value
       .replace(/\s+(?:\d{1,3}|[ivxlcdm]{1,8})$/i, "")
       .replace(/\s+/g, " ")
       .trim();
-  };
 
-  // Detecta títulos académicos reales.
+  // Títulos académicos principales.
   const headingPattern =
     /^(?:cap[ií]tulo\s+(?:[ivxlcdm]+|\d+)(?:\s*[:.\-–—]?\s*.*)?|introducci[oó]n|problema(?:\s+de\s+investigaci[oó]n)?|planteamiento\s+del\s+problema|objetivos?|objetivo\s+general|objetivos?\s+espec[ií]ficos|metodolog[ií]a|resultados?|discusi[oó]n|conclusiones?|recomendaciones?|referencias(?:\s+bibliogr[aá]ficas)?|bibliograf[ií]a|anexos?)$/i;
 
-  const detected:string[] = [];
+  type Section = {
+    title:string;
+    start:number;
+    body:string[];
+  };
 
-  for(const line of lines){
-    if(line.length > 140) continue;
+  const candidates:{title:string;index:number}[] = [];
+
+  lines.forEach((line,index)=>{
+    if(line.length > 140) return;
 
     const cleaned = cleanHeading(line);
 
     if(headingPattern.test(cleaned)){
-      if(
-        cleaned &&
-        !detected.some(
-          x => x.toLocaleLowerCase() === cleaned.toLocaleLowerCase()
-        )
-      ){
-        detected.push(cleaned);
-      }
+      candidates.push({
+        title:cleaned,
+        index
+      });
     }
+  });
+
+  // Evita repeticiones típicas del índice.
+  // Si un título aparece varias veces, preferimos la última aparición,
+  // que normalmente corresponde al contenido real.
+  const uniqueMap = new Map<string,{title:string;index:number}>();
+
+  candidates.forEach(item=>{
+    const key = item.title
+      .toLocaleLowerCase()
+      .replace(/\s+/g," ")
+      .trim();
+
+    uniqueMap.set(key,item);
+  });
+
+  const uniqueHeadings = Array.from(uniqueMap.values())
+    .sort((a,b)=>a.index-b.index);
+
+  const sections:Section[] = uniqueHeadings.map((heading,i)=>{
+    const next = uniqueHeadings[i+1];
+    const end = next ? next.index : lines.length;
+
+    return {
+      title:heading.title,
+      start:heading.index,
+      body:lines.slice(heading.index+1,end)
+    };
+  });
+
+  // Detecta citas Autor (2022), Autor y Autor (2021),
+  // (Autor, 2020), etc.
+  const citationRegex =
+    /(?:\b[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúÑñüÜ\-]+(?:\s+(?:y|&)\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúÑñüÜ\-]+)?\s*\(\d{4}[a-z]?\)|\([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚáéíóúÑñüÜ\-]+(?:\s+et\s+al\.)?(?:,\s*|\s+)\d{4}[a-z]?\))/g;
+
+  const makeBody = (section:Section) => {
+    const usable = section.body
+      .filter(line => {
+        const cleaned = cleanHeading(line);
+        return !headingPattern.test(cleaned);
+      })
+      .filter(line => line.length > 20)
+      .filter(line => !/^\d+$/.test(line))
+      .filter(line => !/^[ivxlcdm]+$/i.test(line));
+
+    if(!usable.length){
+      return "Sustento no encontrado en el documento.";
+    }
+
+    // Conservamos texto del documento.
+    // No generamos información externa.
+    return usable
+      .slice(0,6)
+      .join("\n\n")
+      .slice(0,1800);
+  };
+
+  const makeCitation = (section:Section) => {
+    const sourceText = section.body.join(" ");
+    const matches = sourceText.match(citationRegex) || [];
+
+    const unique = Array.from(new Set(matches));
+
+    if(!unique.length){
+      return "Sustento no encontrado en el documento";
+    }
+
+    return "Fuentes detectadas: " + unique.slice(0,8).join("; ");
+  };
+
+  let newSlides:Slide[] = [];
+
+  // Portada independiente.
+  // Busca un posible título académico antes de Introducción.
+  const firstHeadingIndex =
+    uniqueHeadings.length ? uniqueHeadings[0].index : lines.length;
+
+  const frontMatter = lines
+    .slice(0,firstHeadingIndex)
+    .filter(x => x.length > 15 && x.length < 220)
+    .filter(x => !/^\d+$/.test(x))
+    .filter(x => !/^[ivxlcdm]+$/i.test(x));
+
+  const possibleTitle =
+    frontMatter.find(x =>
+      /liderazgo|crecimiento|investigaci[oó]n|propuesta|diseño|an[aá]lisis|relaci[oó]n|estudio/i.test(x)
+    ) || file.name.replace(/\.docx$/i,"");
+
+  newSlides.push({
+    id:1,
+    title:"Portada",
+    body:possibleTitle,
+    citation:"Fuente: documento original"
+  });
+
+  // Genera una lámina por sección principal.
+  sections
+    .filter(section =>
+      !/^referencias|^bibliograf/i.test(section.title)
+    )
+    .forEach(section=>{
+      newSlides.push({
+        id:newSlides.length+1,
+        title:section.title,
+        body:makeBody(section),
+        citation:makeCitation(section)
+      });
+    });
+
+  // Referencias al final, si existen.
+  const references = sections.find(section =>
+    /^referencias|^bibliograf/i.test(section.title)
+  );
+
+  if(references){
+    const referenceText = references.body
+      .filter(x => x.length > 15)
+      .slice(0,20)
+      .join("\n\n")
+      .slice(0,2200);
+
+    newSlides.push({
+      id:newSlides.length+1,
+      title:references.title,
+      body:referenceText || "Referencias encontradas en el documento.",
+      citation:"Fuente: sección de referencias del documento original"
+    });
   }
 
-  const proposed = detected.length
-    ? detected.slice(0,20)
-    : [
-        "Portada",
-        "Introducción",
-        "Problema de investigación",
-        "Objetivos",
-        "Metodología",
-        "Resultados",
-        "Conclusiones",
-        "Referencias bibliográficas"
-      ];
-
-  const newSlides:Slide[] = proposed.map((title,i) => ({
-    id:i+1,
-    title,
-    body:
-      i===0
-        ? "Presentación generada desde el documento"
-        : "Contenido pendiente de organizar desde el documento original.",
-    citation:
-      i===0
-        ? ""
-        : "Sustento pendiente de verificación"
-  }));
+  if(newSlides.length === 1){
+    newSlides.push({
+      id:2,
+      title:"Contenido",
+      body:"No se pudo identificar automáticamente la estructura del documento.",
+      citation:"Sustento no encontrado en el documento"
+    });
+  }
 
   setSlides(newSlides);
   setSel(0);
+
+  const citationCount = newSlides.filter(
+    x => x.citation.startsWith("Fuentes detectadas:")
+  ).length;
+
   setStatus(
-    `Análisis local terminado: ${newSlides.length} láminas propuestas`
+    `Análisis terminado: ${newSlides.length} láminas propuestas · ${citationCount} secciones con citas detectadas`
   );
 }
   function update(k:keyof Slide,v:string){setSlides(s=>s.map((x,i)=>i===sel?{...x,[k]:v}:x))}
