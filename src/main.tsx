@@ -68,7 +68,7 @@ function App(){
    <article>
     <div className="slide">
      <input className="title" value={s.title} onChange={e=>update("title",e.target.value)} style={{fontFamily:font}}/>
-     <textarea value={s.body} onChange={e=>update("body",e.target.value)} style={{fontFamily:font,fontSize}}/>
+     <textarea value={s.body} onChange={e=>update("body",e.target.value)} style={{fontFamily:font,size}}/>
      <input className="citation" value={s.citation} onChange={e=>update("citation",e.target.value)}/>
     </div>
    </article>
